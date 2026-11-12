@@ -1,6 +1,34 @@
-import 'package:flutter/material.dart';
+import 'dart:io' show Platform;
 
-void main() {
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+class TitlebarInsets {
+  const TitlebarInsets({this.controlsCenterY = 0, this.controlsTrailing = 0});
+  final double controlsCenterY;
+  final double controlsTrailing;
+
+  static const none = TitlebarInsets();
+  static TitlebarInsets current = none;
+
+  static const _channel = MethodChannel('mauve_launcher/window');
+
+  static Future<void> load() async {
+    if (!Platform.isMacOS) return;
+    final insets = await _channel.invokeMapMethod<String, double>(
+      'getTitlebarInsets',
+    );
+    if (insets == null) return;
+    current = TitlebarInsets(
+      controlsCenterY: insets['controlsCenterY'] ?? 0,
+      controlsTrailing: insets['controlsTrailing'] ?? 0,
+    );
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await TitlebarInsets.load();
   runApp(const MyApp());
 }
 
@@ -75,8 +103,15 @@ class _MyHomePageState extends State<MyHomePage> {
     // The Flutter framework has been optimized to make rerunning build methods
     // fast, so that you can just rebuild anything that needs updating rather
     // than having to individually change instances of widgets.
+    final titlebar = TitlebarInsets.current;
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: titlebar.controlsCenterY > 0
+            ? titlebar.controlsCenterY * 2
+            : null,
+        titleSpacing: titlebar.controlsTrailing > 0
+            ? titlebar.controlsTrailing + 12
+            : null,
         // TRY THIS: Try changing the color here to a specific color (to
         // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
         // change color while the other colors stay the same.
