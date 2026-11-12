@@ -5,6 +5,8 @@
 #include <flutter_windows.h>
 #include <windowsx.h>
 
+#include <algorithm>
+
 #include "resource.h"
 
 namespace {
@@ -212,10 +214,6 @@ Win32Window::MessageHandler(HWND hwnd,
         return result;
       }
       params->rgrc[0].top = original_top;
-
-      if (IsZoomed(hwnd)) {
-        params->rgrc[0].top += ResizeBorderThickness();
-      }
       return 0;
     }
 
@@ -275,7 +273,7 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
     case WM_SIZE: {
-      RECT rect = GetClientArea();
+      RECT rect = GetContentArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
@@ -320,7 +318,7 @@ Win32Window* Win32Window::GetThisFromHandle(HWND const window) noexcept {
 void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
-  RECT frame = GetClientArea();
+  RECT frame = GetContentArea();
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
@@ -335,6 +333,14 @@ RECT Win32Window::GetClientArea() {
   RECT frame;
   GetClientRect(window_handle_, &frame);
   return frame;
+}
+
+RECT Win32Window::GetContentArea() {
+  RECT area = GetClientArea();
+  if (IsZoomed(window_handle_)) {
+    area.top = (std::min)(area.top + ResizeBorderThickness(), area.bottom);
+  }
+  return area;
 }
 
 HWND Win32Window::GetHandle() {
@@ -365,11 +371,17 @@ RECT Win32Window::GetCaptionButtonBounds() {
 
   RECT window_rect;
   GetWindowRect(window_handle_, &window_rect);
-  POINT client_origin{0, 0};
-  ClientToScreen(window_handle_, &client_origin);
-  OffsetRect(&bounds, window_rect.left - client_origin.x,
-             window_rect.top - client_origin.y);
-  return bounds;
+  const RECT content = GetContentArea();
+  POINT content_origin{content.left, content.top};
+  ClientToScreen(window_handle_, &content_origin);
+  OffsetRect(&bounds, window_rect.left - content_origin.x,
+             window_rect.top - content_origin.y);
+
+  const RECT content_bounds{0, 0, content.right - content.left,
+                            content.bottom - content.top};
+  RECT visible{};
+  IntersectRect(&visible, &bounds, &content_bounds);
+  return visible;
 }
 
 void Win32Window::StartWindowDrag() {
@@ -407,8 +419,9 @@ void Win32Window::UpdateCaptionButtons() {
   if (child_content_ == nullptr) {
     return;
   }
-  const RECT client = GetClientArea();
-  HRGN region = CreateRectRgn(0, 0, client.right, client.bottom);
+  const RECT content = GetContentArea();
+  HRGN region = CreateRectRgn(0, 0, content.right - content.left,
+                              content.bottom - content.top);
   const RECT buttons = GetCaptionButtonBounds();
   if (!IsRectEmpty(&buttons)) {
     HRGN hole = CreateRectRgnIndirect(&buttons);

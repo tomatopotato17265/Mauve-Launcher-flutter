@@ -56,6 +56,8 @@ class Win32Window {
   RECT GetClientArea();
 
 
+  RECT GetContentArea();
+
   RECT GetCaptionButtonBounds();
 
   void StartWindowDrag();

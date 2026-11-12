@@ -128,12 +128,12 @@ void FlutterWindow::OnCaptionButtonsChanged() {
 
 FlutterWindow::TitlebarInsets FlutterWindow::CurrentTitlebarInsets() {
   const RECT buttons = GetCaptionButtonBounds();
-  const RECT client = GetClientArea();
+  const RECT content = GetContentArea();
   const double scale = GetDpiForWindow(GetHandle()) / 96.0;
   if (IsRectEmpty(&buttons) || scale <= 0) {
     return TitlebarInsets{};
   }
-  return TitlebarInsets{(client.right - buttons.left) / scale,
+  return TitlebarInsets{(content.right - content.left - buttons.left) / scale,
                         (buttons.top + buttons.bottom) / 2.0 / scale};
 }
 
