@@ -2,7 +2,9 @@
 #define RUNNER_FLUTTER_WINDOW_H_
 
 #include <flutter/dart_project.h>
+#include <flutter/encodable_value.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
 
 #include <memory>
 
@@ -21,13 +23,30 @@ class FlutterWindow : public Win32Window {
   void OnDestroy() override;
   LRESULT MessageHandler(HWND window, UINT const message, WPARAM const wparam,
                          LPARAM const lparam) noexcept override;
+  void OnCaptionButtonsChanged() override;
 
  private:
   // The project to run.
   flutter::DartProject project_;
 
+  struct TitlebarInsets {
+    double trailing = 0;
+    double center_y = 0;
+    bool operator==(const TitlebarInsets& other) const {
+      return trailing == other.trailing && center_y == other.center_y;
+    }
+  };
+
+  TitlebarInsets CurrentTitlebarInsets();
+  static flutter::EncodableValue Encode(const TitlebarInsets& insets);
+
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      window_channel_;
+
+  TitlebarInsets sent_insets_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

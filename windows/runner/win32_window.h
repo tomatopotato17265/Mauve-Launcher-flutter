@@ -55,6 +55,17 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+
+  RECT GetContentArea();
+
+  RECT GetCaptionButtonBounds();
+
+  void StartWindowDrag();
+
+  void ToggleMaximize();
+
+  void SetCaptionColor(COLORREF color);
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -70,6 +81,8 @@ class Win32Window {
 
   // Called when Destroy is called.
   virtual void OnDestroy();
+
+  virtual void OnCaptionButtonsChanged();
 
  private:
   friend class WindowClassRegistrar;
@@ -89,6 +102,19 @@ class Win32Window {
 
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
+
+  static LRESULT CALLBACK ChildContentProc(HWND window, UINT message,
+                                           WPARAM wparam, LPARAM lparam,
+                                           UINT_PTR subclass_id,
+                                           DWORD_PTR ref_data);
+
+  int ResizeBorderThickness();
+
+  void ExtendFrameIntoClientArea();
+
+  void UpdateCaptionButtons();
+
+  bool IsOnTopResizeBorder(POINT client_point);
 
   bool quit_on_close_ = false;
 

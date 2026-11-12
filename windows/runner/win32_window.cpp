@@ -1,7 +1,11 @@
 #include "win32_window.h"
 
+#include <commctrl.h>
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <windowsx.h>
+
+#include <algorithm>
 
 #include "resource.h"
 
@@ -15,6 +19,15 @@ namespace {
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
+
+/// Window attribute for the caption color (Windows 11 and later).
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+
+/// Posted after a resize to re-read the caption button bounds once DWM has
+/// laid the buttons out for the new size.
+constexpr UINT kUpdateCaptionButtonsMessage = WM_APP + 1;
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
@@ -145,6 +158,10 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  ExtendFrameIntoClientArea();
+  SetWindowPos(window, nullptr, 0, 0, 0, 0,
+               SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+                   SWP_NOACTIVATE);
 
   return OnCreate();
 }
@@ -178,7 +195,64 @@ Win32Window::MessageHandler(HWND hwnd,
                             UINT const message,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
+
+  LRESULT dwm_result = 0;
+  if (DwmDefWindowProc(hwnd, message, wparam, lparam, &dwm_result)) {
+    return dwm_result;
+  }
+
   switch (message) {
+    case WM_NCCALCSIZE: {
+      if (!wparam) {
+        break;
+      }
+
+      auto params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam);
+      const LONG original_top = params->rgrc[0].top;
+      const LRESULT result = DefWindowProc(hwnd, message, wparam, lparam);
+      if (result != 0) {
+        return result;
+      }
+      params->rgrc[0].top = original_top;
+      return 0;
+    }
+
+    case WM_NCHITTEST: {
+
+      const LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+      if (hit != HTCLIENT) {
+        return hit;
+      }
+      POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      ScreenToClient(hwnd, &point);
+      if (IsOnTopResizeBorder(point)) {
+        const RECT client = GetClientArea();
+        const int corner = ResizeBorderThickness();
+        if (point.x < corner) {
+          return HTTOPLEFT;
+        }
+        if (point.x >= client.right - corner) {
+          return HTTOPRIGHT;
+        }
+        return HTTOP;
+      }
+      return HTCLIENT;
+    }
+
+    case WM_PAINT: {
+
+      PAINTSTRUCT paint;
+      HDC dc = BeginPaint(hwnd, &paint);
+      FillRect(dc, &paint.rcPaint,
+               static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+      EndPaint(hwnd, &paint);
+      return 0;
+    }
+
+    case kUpdateCaptionButtonsMessage:
+      UpdateCaptionButtons();
+      return 0;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
@@ -192,17 +266,20 @@ Win32Window::MessageHandler(HWND hwnd,
       LONG newWidth = newRectSize->right - newRectSize->left;
       LONG newHeight = newRectSize->bottom - newRectSize->top;
 
+      ExtendFrameIntoClientArea();
       SetWindowPos(hwnd, nullptr, newRectSize->left, newRectSize->top, newWidth,
                    newHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 
       return 0;
     }
     case WM_SIZE: {
-      RECT rect = GetClientArea();
+      RECT rect = GetContentArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
+        UpdateCaptionButtons();
+        PostMessage(hwnd, kUpdateCaptionButtonsMessage, 0, 0);
       }
       return 0;
     }
@@ -241,10 +318,13 @@ Win32Window* Win32Window::GetThisFromHandle(HWND const window) noexcept {
 void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
-  RECT frame = GetClientArea();
+  RECT frame = GetContentArea();
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
              frame.bottom - frame.top, true);
+  SetWindowSubclass(content, ChildContentProc, 1,
+                    reinterpret_cast<DWORD_PTR>(this));
+  UpdateCaptionButtons();
 
   SetFocus(child_content_);
 }
@@ -253,6 +333,14 @@ RECT Win32Window::GetClientArea() {
   RECT frame;
   GetClientRect(window_handle_, &frame);
   return frame;
+}
+
+RECT Win32Window::GetContentArea() {
+  RECT area = GetClientArea();
+  if (IsZoomed(window_handle_)) {
+    area.top = (std::min)(area.top + ResizeBorderThickness(), area.bottom);
+  }
+  return area;
 }
 
 HWND Win32Window::GetHandle() {
@@ -270,6 +358,104 @@ bool Win32Window::OnCreate() {
 
 void Win32Window::OnDestroy() {
   // No-op; provided for subclasses.
+}
+
+void Win32Window::OnCaptionButtonsChanged() {}
+
+RECT Win32Window::GetCaptionButtonBounds() {
+  RECT bounds{};
+  if (FAILED(DwmGetWindowAttribute(window_handle_, DWMWA_CAPTION_BUTTON_BOUNDS,
+                                   &bounds, sizeof(bounds)))) {
+    return RECT{};
+  }
+
+  RECT window_rect;
+  GetWindowRect(window_handle_, &window_rect);
+  const RECT content = GetContentArea();
+  POINT content_origin{content.left, content.top};
+  ClientToScreen(window_handle_, &content_origin);
+  OffsetRect(&bounds, window_rect.left - content_origin.x,
+             window_rect.top - content_origin.y);
+
+  const RECT content_bounds{0, 0, content.right - content.left,
+                            content.bottom - content.top};
+  RECT visible{};
+  IntersectRect(&visible, &bounds, &content_bounds);
+  return visible;
+}
+
+void Win32Window::StartWindowDrag() {
+
+  ReleaseCapture();
+  SendMessage(window_handle_, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0);
+}
+
+void Win32Window::ToggleMaximize() {
+  SendMessage(window_handle_, WM_SYSCOMMAND,
+              IsZoomed(window_handle_) ? SC_RESTORE : SC_MAXIMIZE, 0);
+}
+
+void Win32Window::SetCaptionColor(COLORREF color) {
+  DwmSetWindowAttribute(window_handle_, DWMWA_CAPTION_COLOR, &color,
+                        sizeof(color));
+}
+
+int Win32Window::ResizeBorderThickness() {
+  const UINT dpi = GetDpiForWindow(window_handle_);
+  return GetSystemMetricsForDpi(SM_CYFRAME, dpi) +
+         GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+}
+
+void Win32Window::ExtendFrameIntoClientArea() {
+
+  const UINT dpi = GetDpiForWindow(window_handle_);
+  const MARGINS margins{
+      0, 0, GetSystemMetricsForDpi(SM_CYCAPTION, dpi) + ResizeBorderThickness(),
+      0};
+  DwmExtendFrameIntoClientArea(window_handle_, &margins);
+}
+
+void Win32Window::UpdateCaptionButtons() {
+  if (child_content_ == nullptr) {
+    return;
+  }
+  const RECT content = GetContentArea();
+  HRGN region = CreateRectRgn(0, 0, content.right - content.left,
+                              content.bottom - content.top);
+  const RECT buttons = GetCaptionButtonBounds();
+  if (!IsRectEmpty(&buttons)) {
+    HRGN hole = CreateRectRgnIndirect(&buttons);
+    CombineRgn(region, region, hole, RGN_DIFF);
+    DeleteObject(hole);
+  }
+  SetWindowRgn(child_content_, region, TRUE);
+  OnCaptionButtonsChanged();
+}
+
+bool Win32Window::IsOnTopResizeBorder(POINT client_point) {
+  return !IsZoomed(window_handle_) && client_point.y >= 0 &&
+         client_point.y < ResizeBorderThickness();
+}
+
+LRESULT CALLBACK Win32Window::ChildContentProc(HWND window, UINT message,
+                                               WPARAM wparam, LPARAM lparam,
+                                               UINT_PTR subclass_id,
+                                               DWORD_PTR ref_data) {
+  auto that = reinterpret_cast<Win32Window*>(ref_data);
+  switch (message) {
+    case WM_NCHITTEST: {
+      POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+      ScreenToClient(that->window_handle_, &point);
+      if (that->IsOnTopResizeBorder(point)) {
+        return HTTRANSPARENT;
+      }
+      break;
+    }
+    case WM_NCDESTROY:
+      RemoveWindowSubclass(window, ChildContentProc, subclass_id);
+      break;
+  }
+  return DefSubclassProc(window, message, wparam, lparam);
 }
 
 void Win32Window::UpdateTheme(HWND const window) {
