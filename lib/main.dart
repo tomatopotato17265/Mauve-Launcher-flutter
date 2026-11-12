@@ -1,34 +1,10 @@
-import 'dart:io' show Platform;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-class TitlebarInsets {
-  const TitlebarInsets({this.controlsCenterY = 0, this.controlsTrailing = 0});
-  final double controlsCenterY;
-  final double controlsTrailing;
-
-  static const none = TitlebarInsets();
-  static TitlebarInsets current = none;
-
-  static const _channel = MethodChannel('mauve_launcher/window');
-
-  static Future<void> load() async {
-    if (!Platform.isMacOS) return;
-    final insets = await _channel.invokeMapMethod<String, double>(
-      'getTitlebarInsets',
-    );
-    if (insets == null) return;
-    current = TitlebarInsets(
-      controlsCenterY: insets['controlsCenterY'] ?? 0,
-      controlsTrailing: insets['controlsTrailing'] ?? 0,
-    );
-  }
-}
+import 'window_chrome.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await TitlebarInsets.load();
+  await WindowChrome.init();
   runApp(const MyApp());
 }
 
@@ -103,54 +79,56 @@ class _MyHomePageState extends State<MyHomePage> {
     // The Flutter framework has been optimized to make rerunning build methods
     // fast, so that you can just rebuild anything that needs updating rather
     // than having to individually change instances of widgets.
-    final titlebar = TitlebarInsets.current;
-    return Scaffold(
-      appBar: AppBar(
-        toolbarHeight: titlebar.controlsCenterY > 0
-            ? titlebar.controlsCenterY * 2
-            : null,
-        titleSpacing: titlebar.controlsTrailing > 0
-            ? titlebar.controlsTrailing + 12
-            : null,
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
+    final barColor = Theme.of(context).colorScheme.inversePrimary;
+    return ValueListenableBuilder(
+      valueListenable: WindowChrome.insets,
+      builder: (context, titlebar, _) => Scaffold(
+        appBar: AppBar(
+          toolbarHeight: titlebar.centerY > 0 ? titlebar.centerY * 2 : null,
+          titleSpacing: titlebar.leading > 0 ? titlebar.leading + 12 : null,
+          actions: [
+            if (titlebar.trailing > 0) SizedBox(width: titlebar.trailing),
           ],
+          // TRY THIS: Try changing the color here to a specific color (to
+          // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
+          // change color while the other colors stay the same.
+          backgroundColor: barColor,
+          // The bar's empty space moves the window, like the OS title bar did.
+          flexibleSpace: WindowDragArea(color: barColor),
+          title: IgnorePointer(child: Text(widget.title)),
         ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+        body: Center(
+          // Center is a layout widget. It takes a single child and positions it
+          // in the middle of the parent.
+          child: Column(
+            // Column is also a layout widget. It takes a list of children and
+            // arranges them vertically. By default, it sizes itself to fit its
+            // children horizontally, and tries to be as tall as its parent.
+            //
+            // Column has various properties to control how it sizes itself and
+            // how it positions its children. Here we use mainAxisAlignment to
+            // center the children vertically; the main axis here is the vertical
+            // axis because Columns are vertical (the cross axis would be
+            // horizontal).
+            //
+            // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
+            // action in the IDE, or press "p" in the console), to see the
+            // wireframe for each widget.
+            mainAxisAlignment: .center,
+            children: [
+              const Text('You have pushed the button this many times:'),
+              Text(
+                '$_counter',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+            ],
+          ),
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: _incrementCounter,
+          tooltip: 'Increment',
+          child: const Icon(Icons.add),
+        ),
       ),
     );
   }
